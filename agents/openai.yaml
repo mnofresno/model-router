@@ -1,0 +1,4 @@
+interface:
+  display_name: "Model Router"
+  short_description: "Intelligently route tasks to optimal AI models"
+  default_prompt: "Use the model-router skill to automatically select the best AI model for each task based on task type, complexity, and cost considerations. This skill implements hybrid routing across OpenAI, DeepSeek, and Ollama providers to prevent API throttling and reduce costs while maintaining performance."
