@@ -236,6 +236,28 @@ class TaskClassifier:
         Returns:
             Tuple of (primary_category, confidence_score, all_scores)
         """
+        # Handle list content (OpenAI multimodal format)
+        if isinstance(text, list):
+            # Extract text from list of content parts
+            text_parts = []
+            for part in text:
+                if isinstance(part, dict):
+                    if part.get("type") == "text":
+                        text_parts.append(part.get("text", ""))
+                    elif "text" in part:
+                        text_parts.append(part.get("text", ""))
+                    elif "content" in part:
+                        text_parts.append(part.get("content", ""))
+                elif isinstance(part, str):
+                    text_parts.append(part)
+            text = " ".join(text_parts).strip()
+
+        # Ensure text is a string
+        if text is None:
+            text = ""
+        elif not isinstance(text, str):
+            text = str(text)
+
         text = text.lower().strip()
 
         # Check if context contains tool calls
@@ -315,6 +337,28 @@ class TaskClassifier:
         Returns:
             'simple', 'moderate', or 'complex'
         """
+        # Handle list content (OpenAI multimodal format)
+        if isinstance(text, list):
+            # Extract text from list of content parts
+            text_parts = []
+            for part in text:
+                if isinstance(part, dict):
+                    if part.get("type") == "text":
+                        text_parts.append(part.get("text", ""))
+                    elif "text" in part:
+                        text_parts.append(part.get("text", ""))
+                    elif "content" in part:
+                        text_parts.append(part.get("content", ""))
+                elif isinstance(part, str):
+                    text_parts.append(part)
+            text = " ".join(text_parts).strip()
+
+        # Ensure text is a string
+        if text is None:
+            text = ""
+        elif not isinstance(text, str):
+            text = str(text)
+
         word_count = len(text.split())
 
         # Count technical indicators

@@ -128,6 +128,13 @@ class ModelRouterProvider:
             "temperature": kwargs.get("temperature", 0.7),
             "max_tokens": kwargs.get("max_tokens", 2000),
         }
+        # Add tool parameters if present
+        if "tools" in kwargs:
+            params["tools"] = kwargs["tools"]
+        if "tool_choice" in kwargs:
+            params["tool_choice"] = kwargs["tool_choice"]
+        if "response_format" in kwargs:
+            params["response_format"] = kwargs["response_format"]
 
         if provider == "openai":
             client = self._get_openai_client()
@@ -137,49 +144,103 @@ class ModelRouterProvider:
                     params["max_completion_tokens"] = params.pop("max_tokens", 2000)
 
                 response = client.chat.completions.create(**params)
-                return {
-                    "choices": [
-                        {
-                            "message": {
-                                "role": "assistant",
-                                "content": response.choices[0].message.content,
-                            },
-                            "finish_reason": response.choices[0].finish_reason,
+                # Convert to dict preserving all fields
+                if hasattr(response, "to_dict"):
+                    response_dict = response.to_dict()
+                else:
+                    response_dict = {
+                        "id": getattr(
+                            response, "id", f"chatcmpl-{datetime.now().timestamp()}"
+                        ),
+                        "object": getattr(response, "object", "chat.completion"),
+                        "created": getattr(
+                            response, "created", int(datetime.now().timestamp())
+                        ),
+                        "model": response.model,
+                        "choices": [
+                            {
+                                "index": i,
+                                "message": {
+                                    "role": choice.message.role,
+                                    "content": choice.message.content,
+                                    "tool_calls": [
+                                        {
+                                            "id": tc.id,
+                                            "type": tc.type,
+                                            "function": {
+                                                "name": tc.function.name,
+                                                "arguments": tc.function.arguments,
+                                            },
+                                        }
+                                        for tc in choice.message.tool_calls
+                                    ]
+                                    if choice.message.tool_calls
+                                    else None,
+                                },
+                                "finish_reason": choice.finish_reason,
+                            }
+                            for i, choice in enumerate(response.choices)
+                        ],
+                        "usage": {
+                            "prompt_tokens": response.usage.prompt_tokens,
+                            "completion_tokens": response.usage.completion_tokens,
+                            "total_tokens": response.usage.total_tokens,
                         }
-                    ],
-                    "usage": {
-                        "prompt_tokens": response.usage.prompt_tokens,
-                        "completion_tokens": response.usage.completion_tokens,
-                        "total_tokens": response.usage.total_tokens,
+                        if response.usage
+                        else None,
                     }
-                    if response.usage
-                    else None,
-                    "model": response.model,
-                }
+                return response_dict
 
         elif provider == "deepseek":
             client = self._get_deepseek_client()
             if client:
                 response = client.chat.completions.create(**params)
-                return {
-                    "choices": [
-                        {
-                            "message": {
-                                "role": "assistant",
-                                "content": response.choices[0].message.content,
-                            },
-                            "finish_reason": response.choices[0].finish_reason,
+                # Convert to dict preserving all fields
+                if hasattr(response, "to_dict"):
+                    response_dict = response.to_dict()
+                else:
+                    response_dict = {
+                        "id": getattr(
+                            response, "id", f"chatcmpl-{datetime.now().timestamp()}"
+                        ),
+                        "object": getattr(response, "object", "chat.completion"),
+                        "created": getattr(
+                            response, "created", int(datetime.now().timestamp())
+                        ),
+                        "model": response.model,
+                        "choices": [
+                            {
+                                "index": i,
+                                "message": {
+                                    "role": choice.message.role,
+                                    "content": choice.message.content,
+                                    "tool_calls": [
+                                        {
+                                            "id": tc.id,
+                                            "type": tc.type,
+                                            "function": {
+                                                "name": tc.function.name,
+                                                "arguments": tc.function.arguments,
+                                            },
+                                        }
+                                        for tc in choice.message.tool_calls
+                                    ]
+                                    if choice.message.tool_calls
+                                    else None,
+                                },
+                                "finish_reason": choice.finish_reason,
+                            }
+                            for i, choice in enumerate(response.choices)
+                        ],
+                        "usage": {
+                            "prompt_tokens": response.usage.prompt_tokens,
+                            "completion_tokens": response.usage.completion_tokens,
+                            "total_tokens": response.usage.total_tokens,
                         }
-                    ],
-                    "usage": {
-                        "prompt_tokens": response.usage.prompt_tokens,
-                        "completion_tokens": response.usage.completion_tokens,
-                        "total_tokens": response.usage.total_tokens,
+                        if response.usage
+                        else None,
                     }
-                    if response.usage
-                    else None,
-                    "model": response.model,
-                }
+                return response_dict
 
         elif provider == "ollama":
             # Call Ollama local API
@@ -207,8 +268,13 @@ class ModelRouterProvider:
             data = response.json()
 
             return {
+                "id": f"chatcmpl-{datetime.now().timestamp()}",
+                "object": "chat.completion",
+                "created": int(datetime.now().timestamp()),
+                "model": model,
                 "choices": [
                     {
+                        "index": 0,
                         "message": {
                             "role": "assistant",
                             "content": data["message"]["content"],
@@ -222,7 +288,6 @@ class ModelRouterProvider:
                     "total_tokens": data.get("prompt_eval_count", 0)
                     + data.get("eval_count", 0),
                 },
-                "model": model,
             }
 
         raise ValueError(f"Unsupported provider: {provider}")
@@ -243,21 +308,58 @@ class ModelRouterProvider:
             user_message = None
             for msg in reversed(messages):
                 if msg["role"] == "user":
-                    user_message = msg["content"]
+                    content = msg.get("content")
+                    if isinstance(content, list):
+                        # Extract text from content parts (OpenAI format)
+                        text_parts = []
+                        for part in content:
+                            if isinstance(part, dict):
+                                if part.get("type") == "text":
+                                    text_parts.append(part.get("text", ""))
+                                elif "text" in part:
+                                    text_parts.append(part.get("text", ""))
+                                elif "content" in part:
+                                    text_parts.append(part.get("content", ""))
+                            elif isinstance(part, str):
+                                text_parts.append(part)
+                        user_message = " ".join(text_parts).strip()
+                    else:
+                        user_message = str(content) if content is not None else ""
                     break
 
             if not user_message:
-                user_message = messages[-1]["content"] if messages else ""
+                if messages:
+                    last_msg = messages[-1]
+                    content = last_msg.get("content")
+                    if isinstance(content, list):
+                        text_parts = []
+                        for part in content:
+                            if isinstance(part, dict) and part.get("type") == "text":
+                                text_parts.append(part.get("text", ""))
+                            elif isinstance(part, str):
+                                text_parts.append(part)
+                        user_message = " ".join(text_parts).strip()
+                    else:
+                        user_message = str(content) if content is not None else ""
+                else:
+                    user_message = ""
 
             # Check if conversation has tool calls
             has_tool_calls = False
+            logger.info(f"Checking for tool calls in {len(messages)} messages")
             for msg in messages:
                 if msg.get("role") == "assistant" and msg.get("tool_calls"):
                     has_tool_calls = True
+                    logger.info(
+                        f"Tool calls detected in assistant message: {msg.get('tool_calls')}"
+                    )
                     break
                 if msg.get("role") == "tool":
                     has_tool_calls = True
+                    logger.info("Tool call response detected")
                     break
+            if has_tool_calls:
+                logger.info("Tool calls detected in conversation")
 
             # Get routing decision
             routing_result = self.router.process_request(user_message, messages)
@@ -337,10 +439,38 @@ class ModelRouterProvider:
 
 
 # HTTP server implementation
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response, stream_with_context
 
 app = Flask(__name__)
 provider = ModelRouterProvider()
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    """Health check endpoint."""
+    return jsonify(
+        {
+            "status": "healthy",
+            "service": "model-router",
+            "version": "1.0.0",
+            "timestamp": datetime.now().isoformat(),
+        }
+    )
+
+
+@app.route("/", methods=["GET"])
+def index():
+    """Root endpoint."""
+    return jsonify(
+        {
+            "service": "Model Router MCP Server",
+            "version": "1.0.0",
+            "endpoints": {
+                "/v1/chat/completions": "OpenAI-compatible chat completions",
+                "/health": "Health check",
+            },
+        }
+    )
 
 
 @app.route("/v1/chat/completions", methods=["POST"])
@@ -350,6 +480,16 @@ def chat_completions():
         data = request.json
         messages = data.get("messages", [])
         model = data.get("model", "model-router")  # Ignored, we always route
+        stream = data.get("stream", False)
+
+        # Log request details
+        logger.info(f"Received request with {len(messages)} messages, stream={stream}")
+        if "tools" in data:
+            logger.info(f"Request includes {len(data['tools'])} tools")
+        # Check for existing tool calls in messages
+        tool_call_count = sum(1 for msg in messages if msg.get("tool_calls"))
+        if tool_call_count > 0:
+            logger.info(f"Messages contain {tool_call_count} existing tool calls")
 
         # Extract parameters
         params = {
@@ -359,11 +499,86 @@ def chat_completions():
             "frequency_penalty": data.get("frequency_penalty", 0.0),
             "presence_penalty": data.get("presence_penalty", 0.0),
         }
+        # Pass through tool parameters if present
+        if "tools" in data:
+            params["tools"] = data["tools"]
+        if "tool_choice" in data:
+            params["tool_choice"] = data["tool_choice"]
+        if "response_format" in data:
+            params["response_format"] = data["response_format"]
 
         # Route and get completion
         response = provider.route_and_complete(messages, **params)
 
-        return jsonify(response)
+        if stream:
+            # Remove routing_metadata from streamed response (not part of OpenAI spec)
+            stream_response = response.copy()
+            stream_response.pop("routing_metadata", None)
+
+            # Extract content and finish_reason from response
+            choices = stream_response.get("choices", [])
+            if choices:
+                content = choices[0].get("message", {}).get("content", "")
+                finish_reason = choices[0].get("finish_reason", "stop")
+                model = stream_response.get("model", "model-router")
+                response_id = stream_response.get(
+                    "id", f"chatcmpl-{datetime.now().timestamp()}"
+                )
+                created = stream_response.get(
+                    "created", int(datetime.now().timestamp())
+                )
+            else:
+                content = ""
+                finish_reason = "stop"
+                model = "model-router"
+                response_id = f"chatcmpl-{datetime.now().timestamp()}"
+                created = int(datetime.now().timestamp())
+
+            def generate():
+                # First chunk with role and content
+                if content:
+                    chunk1 = {
+                        "id": response_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {
+                                    "role": "assistant",
+                                    "content": content,
+                                },
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                    yield f"data: {json.dumps(chunk1)}\n\n"
+
+                # Final chunk with empty delta and finish_reason
+                chunk2 = {
+                    "id": response_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": finish_reason,
+                        }
+                    ],
+                }
+                yield f"data: {json.dumps(chunk2)}\n\n"
+                yield "data: [DONE]\n\n"
+
+            return Response(
+                stream_with_context(generate()),
+                content_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+            )
+        else:
+            return jsonify(response)
 
     except Exception as e:
         logger.error(f"Error in chat_completions: {e}", exc_info=True)
@@ -385,12 +600,6 @@ def list_models():
             ]
         }
     )
-
-
-@app.route("/health", methods=["GET"])
-def health():
-    """Health check endpoint."""
-    return jsonify({"status": "healthy"})
 
 
 def main():

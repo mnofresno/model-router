@@ -202,17 +202,28 @@ class ModelRouter:
         # Step 4: Check budget constraints
         budget_constraints = self._get_budget_constraints()
 
-        # Step 5: Select model
+        # Step 5: Detect tool calls in context
+        requires_tool_calls = False
+        if context:
+            for msg in context:
+                if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                    requires_tool_calls = True
+                    break
+                if msg.get("role") == "tool":
+                    requires_tool_calls = True
+                    break
+
+        # Step 7: Select model
         model_constraints = {
             "cost_minimize": budget_constraints.get("cost_minimize", False),
             "quality_first": task_category == "planning" and complexity == "complex",
         }
 
         primary_model, fallback_chain, model_info = self.model_selector.select_model(
-            task_category, complexity, model_constraints
+            task_category, complexity, model_constraints, requires_tool_calls
         )
 
-        # Step 6: Estimate cost
+        # Step 8: Estimate cost
         # Rough token estimation for cost calculation
         estimated_input_tokens = self._estimate_tokens(user_input)
         estimated_output_tokens = self._estimate_response_tokens(
@@ -223,10 +234,10 @@ class ModelRouter:
             primary_model, estimated_input_tokens, estimated_output_tokens
         )
 
-        # Step 7: Check if within budget
+        # Step 9: Check if within budget
         within_budget, current_spend, limit = self.cost_tracker.check_budget("daily")
 
-        # Step 8: Make final routing decision
+        # Step 10: Make final routing decision
         final_model = primary_model
         if not within_budget and cost_estimate > 0.01:  # If over budget and expensive
             # Switch to cheaper model
@@ -239,7 +250,7 @@ class ModelRouter:
                     cost_estimate = model_cost
                     break
 
-        # Step 9: Prepare response
+        # Step 11: Prepare response
         result = {
             "timestamp": datetime.now().isoformat(),
             "session_id": self.current_session["session_id"],
